@@ -12,7 +12,7 @@ from flask import (
 from flask_login import login_required
 from flask_paginate import Pagination
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 from .forms import (
@@ -662,3 +662,19 @@ def rule(rule_id):
     form = UpdateRuleForm(request.form, obj=rule)
     flash_errors(form)
     return render_template('rule.html', form=form, rule=rule)
+
+
+@blueprint.route('/search', methods=['GET', 'POST'])
+def search():
+
+    results = ResultLog.query
+
+    for key in request.args:
+        values = request.args.getlist(key)
+        ors = []
+        for value in values:
+            ors.append(ResultLog.columns[key].astext == value)
+        else:
+            results = results.filter(or_(*ors))
+
+    return render_template('results.html', results=results)
