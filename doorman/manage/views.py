@@ -666,6 +666,7 @@ def rule(rule_id):
 
 @blueprint.route('/search', methods=['GET', 'POST'])
 @blueprint.route('/search/<int:page>', methods=['GET', 'POST'])
+@login_required
 def search(page=1):
     try:
         per_page = int(request.args.pop('pp', max_pp))
