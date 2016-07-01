@@ -30,7 +30,7 @@ from .forms import (
 from doorman.database import db
 from doorman.models import (
     DistributedQuery, DistributedQueryTask, DistributedQueryResult,
-    FilePath, Node, Pack, Query, Tag, Rule, StatusLog
+    FilePath, Node, Pack, Query, Tag, Rule, ResultLog, StatusLog
 )
 from doorman.utils import (
     create_query_pack_from_upload, flash_errors, get_paginate_options
@@ -665,11 +665,21 @@ def rule(rule_id):
 
 
 @blueprint.route('/search', methods=['GET', 'POST'])
-def search():
+@blueprint.route('/search/<int:page>', methods=['GET', 'POST'])
+def search(page=1):
+    try:
+        per_page = int(request.args.pop('pp', max_pp))
+    except Exception:
+        per_page = 20
+
+    per_page = max(0, min(500, per_page))
 
     results = ResultLog.query
 
     for key in request.args:
+        if key in ('pp', 'order_by', 'sort'):
+            continue
+
         values = request.args.getlist(key)
         ors = []
         for value in values:
@@ -677,4 +687,25 @@ def search():
         else:
             results = results.filter(or_(*ors))
 
-    return render_template('results.html', results=results)
+    sort = request.args.get('sort', 'asc')
+    if sort not in ('asc', 'desc'):
+        sort = 'asc'
+
+    for order_by in request.args.get('order_by', '').split(','):
+        order_by = getattr(ResultLog.columns[order_by].astext, sort)()
+        results = results.order_by(order_by)
+
+    results = results.paginate(page=page, per_page=per_page)
+
+    pagination = Pagination(page=page,
+                            per_page=results.per_page,
+                            total=results.total,
+                            alignment='center',
+                            show_single_page=False,
+                            search=True,
+                            found=results.total,
+                            bs_version=3)
+
+    return render_template('results.html',
+                           pagination=pagination,
+                           results=results.items)
