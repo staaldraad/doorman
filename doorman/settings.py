@@ -60,13 +60,6 @@ class Config(object):
     CELERY_RESULT_SERIALIZER = 'djson'
     CELERY_TASK_SERIALIZER = 'djson'
 
-    GRAPHITE_ENABLED = False
-    # GRAPHITE_HOST = "localhost"
-    # GRAPHITE_PORT = 2003
-    GRAPHITE_ALLOW = [
-        'api.*',
-    ]
-
     # You can specify a set of custom logger plugins here.  These plugins will
     # be called for every status or result log that is received, and can
     # do what they wish with them.
@@ -241,8 +234,6 @@ class DevConfig(Config):
         'secret',
     ]
 
-    GRAPHITE_PREFIX = 'dev.doorman'
-
 
 class TestConfig(Config):
     """
@@ -259,8 +250,6 @@ class TestConfig(Config):
         'secret',
     ]
     DOORMAN_UNIQUE_HOST_ID = False
-
-    GRAPHITE_ENABLED = False
 
     DOORMAN_AUTH_METHOD = None
 

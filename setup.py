@@ -55,7 +55,6 @@ setup(
         'redis==2.10.5',
         'requests==2.10.0',
         'requests-oauthlib==0.6.1',
-        'scales==1.0.9',
         'SQLAlchemy==1.0.12',
         'webassets==0.11.1',
         'Werkzeug==0.11.8',
