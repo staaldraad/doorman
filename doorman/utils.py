@@ -310,9 +310,9 @@ def learn_from_result(result, node):
     return
 
 
-def process_result(result, node):
+def process_result(result, node_id):
     if not result['data']:
-        current_app.logger.error("No results to process from %s", node)
+        current_app.logger.error("No results to process from %s", node_id)
         return
 
     for name, action, columns, timestamp, in extract_results(result):
@@ -320,7 +320,7 @@ def process_result(result, node):
                         action=action,
                         columns=columns,
                         timestamp=timestamp,
-                        node_id=node.id)
+                        node_id=node_id)
 
 
 def extract_results(result):

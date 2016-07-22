@@ -32,6 +32,7 @@ from doorman.models import (
     DistributedQuery, DistributedQueryTask, DistributedQueryResult,
     FilePath, Node, Pack, Query, Tag, Rule, StatusLog
 )
+from doorman.extensions import cache
 from doorman.utils import (
     create_query_pack_from_upload, flash_errors, get_paginate_options
 )
@@ -176,6 +177,16 @@ def get_node(node_id):
         node.node_info = node_info
         node.is_active = form.is_active.data
         node.save()
+
+        # delete the node from the cache if it is no longer active
+        # otherwise, update it in the cache
+
+        if not node.is_active:
+            current_app.logger.debug("Clearing node from cache %s", node)
+            cache.delete_cached_node(node.node_key)
+        else:
+            current_app.logger.debug("Updating node in cache %s", node)
+            cache.update_cached_node(node.node_key, node.to_dict())
 
         if request.is_xhr:
             return '', 204

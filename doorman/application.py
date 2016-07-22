@@ -7,7 +7,7 @@ from doorman.api import blueprint as api
 from doorman.assets import assets
 from doorman.manage import blueprint as backend
 from doorman.extensions import (
-    bcrypt, csrf, db, debug_toolbar, ldap_manager, log_tee, login_manager,
+    bcrypt, cache, csrf, db, debug_toolbar, ldap_manager, log_tee, login_manager,
     mail, make_celery, migrate, rule_manager, sentry
 )
 from doorman.settings import ProdConfig
@@ -46,6 +46,7 @@ def register_blueprints(app):
 
 def register_extensions(app):
     bcrypt.init_app(app)
+    cache.init_app(app)
     csrf.init_app(app)
     db.init_app(app)
     migrate.init_app(app, db)

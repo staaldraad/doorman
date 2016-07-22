@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from flask_bcrypt import Bcrypt
+from flask_cache import Cache as _Cache
 from flask_debugtoolbar import DebugToolbarExtension
 from flask_ldap3_login import LDAP3LoginManager
 from flask_login import LoginManager
@@ -201,7 +202,26 @@ def make_celery(app, celery):
     return celery
 
 
+class Cache(_Cache):
+    def get_cached_node(self, node_key):
+        return self.get('node:node_key:{node_key}'.format(node_key=node_key))
+
+    def set_cached_node(self, node_key, node, timeout=0):
+        return self.set(
+            'node:node_key:{node_key}'.format(node_key=node_key),
+            node,
+            timeout=timeout
+        )
+
+    update_cached_node = set_cached_node
+
+    def delete_cached_node(self, node_key):
+        return self.delete('node:node_key:{node_key}'.format(node_key=node_key))
+
+
+
 bcrypt = Bcrypt()
+cache = Cache()
 csrf = CsrfProtect()
 db = SQLAlchemy()
 mail = Mail()

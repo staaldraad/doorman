@@ -55,6 +55,11 @@ class Config(object):
     BROKER_URL = 'redis://localhost:6379/0'
     CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
+    # This should be different than your broker URL (if using Redis as a broker)
+    CACHE_TYPE = 'redis'
+    CACHE_KEY_PREFIX = 'doorman:'
+    CACHE_REDIS_URL = 'redis://localhost:6379/1'
+
     CELERY_ACCEPT_CONTENT = ['djson', 'application/x-djson']
     CELERY_EVENT_SERIALIZER = 'djson'
     CELERY_RESULT_SERIALIZER = 'djson'
@@ -252,6 +257,7 @@ class TestConfig(Config):
     DOORMAN_UNIQUE_HOST_ID = False
 
     DOORMAN_AUTH_METHOD = None
+    CELERY_ALWAYS_EAGER = True
 
 
 if os.environ.get('DYNO'):

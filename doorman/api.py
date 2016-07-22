@@ -4,18 +4,19 @@ from io import BytesIO
 import datetime as dt
 import gzip
 import json
+import logging
+import uuid
 
 from flask import Blueprint, current_app, jsonify, request, g
 
 from doorman.database import db
-from doorman.extensions import log_tee
+from doorman.extensions import cache
 from doorman.models import (
     Node, Tag,
     DistributedQueryTask, DistributedQueryResult,
     StatusLog,
 )
-from doorman.tasks import analyze_result
-from doorman.utils import process_result
+from doorman.tasks import process_result
 
 
 blueprint = Blueprint('api', __name__)
@@ -44,27 +45,29 @@ def node_required(f):
             return ""
 
         node_key = request_json.get('node_key')
-        node = Node.query.filter_by(node_key=node_key).first()
+        node = cache.get_cached_node(node_key)
 
         if not node:
-            current_app.logger.error(
-                "%s - Could not find node with node_key %s",
-                request.remote_addr, node_key
-            )
-            return jsonify(node_invalid=True)
+            node = Node.query.filter_by(node_key=node_key).first()
 
-        if not node.is_active:
-            current_app.logger.error(
-                "%s - Node %s came back from the dead!",
-                request.remote_addr, node_key
-            )
-            return jsonify(node_invalid=True)
+            if not node:
+                current_app.logger.error(
+                    "%s - Could not find node with node_key %s",
+                    request.remote_addr, node_key
+                )
+                return jsonify(node_invalid=True)
 
-        node.update(
-            last_checkin=dt.datetime.utcnow(),
-            last_ip=request.remote_addr,
-            commit=False
-        )
+            if not node.is_active:
+                current_app.logger.error(
+                    "%s - Node %s came back from the dead!",
+                    request.remote_addr, node_key
+                )
+                return jsonify(node_invalid=True)
+
+            # cache indefinitely, until updated by a celery worker,
+            # or user in /manage clears it
+            node = node.to_dict()
+            cache.set_cached_node(node_key, node, timeout=0)
 
         return f(node=node, *args, **kwargs)
     return decorated_function
@@ -108,7 +111,7 @@ def enroll():
     # If we pre-populate node table with a per-node enroll_secret,
     # let's query it now.
 
-    node = Node.query.filter(Node.enroll_secret == enroll_secret).first()
+    node = Node.query.filter_by(enroll_secret=enroll_secret).first()
 
     if not node and enroll_secret not in current_app.config['DOORMAN_ENROLL_SECRET']:
         current_app.logger.error("%s - Invalid enroll_secret %s",
@@ -118,7 +121,7 @@ def enroll():
 
     host_identifier = request_json.get('host_identifier')
 
-    if node and node.enrolled_on:
+    if node and node.enrolled_on and node.is_active:
         current_app.logger.warn(
             "%s - %s already enrolled on %s, returning existing node_key",
             request.remote_addr, node, node.enrolled_on
@@ -149,6 +152,13 @@ def enroll():
             "%s - Duplicate host_identifier %s, already enrolled %s",
             request.remote_addr, host_identifier, existing_node.enrolled_on
         )
+
+        if not existing_node.is_active:
+            current_app.logger.error(
+                "%s - Node %s came back from the dead!",
+                request.remote_addr, existing_node.node_key
+            )
+            return jsonify(node_invalid=True)
 
         if current_app.config['DOORMAN_EXPECTS_UNIQUE_HOST_ID'] is True:
             current_app.logger.info(
@@ -202,13 +212,13 @@ def configuration(node=None):
     '''
     current_app.logger.info(
         "%s - %s checking in to retrieve a new configuration",
-        request.remote_addr, node
+        request.remote_addr, node['id']
     )
+
+    node = Node.get_by_id(node['id'])
+    node.update(last_checkin=dt.datetime.utcnow(), last_ip=request.remote_addr)
     config = node.get_config()
 
-    # write last_checkin, last_ip
-    db.session.add(node)
-    db.session.commit()
     return jsonify(config, node_invalid=False)
 
 
@@ -217,40 +227,27 @@ def configuration(node=None):
 @node_required
 def logger(node=None):
     '''
+    Responsible for taking osquery result data from a node and
+    sending it to in-memory key/value store for result processing
+    by background Celery workers.
     '''
     data = request.get_json()
-    log_type = data['log_type']
-    log_level = current_app.config['DOORMAN_MINIMUM_OSQUERY_LOG_LEVEL']
 
-    if current_app.debug:
+    if current_app.logger.isEnabledFor(logging.DEBUG):
         current_app.logger.debug(json.dumps(data, indent=2))
 
-    if log_type == 'status':
-        log_tee.handle_status(data, host_identifier=node.host_identifier)
-        for item in data.get('data', []):
-            if int(item['severity']) < log_level:
-                continue
-            status_log = StatusLog(node=node, **item)
-            db.session.add(status_log)
-        else:
-            db.session.add(node)
-            db.session.commit()
+    result = {
+        'data': data,
+        'remote_addr': request.remote_addr,
+        'last_checkin': dt.datetime.utcnow(),
+    }
 
-    elif log_type == 'result':
-        db.session.add(node)
-        db.session.bulk_save_objects(process_result(data, node))
-        db.session.commit()
-        log_tee.handle_result(data, host_identifier=node.host_identifier)
-        analyze_result.delay(data, node.to_dict())
+    # set this value in the cache indefinitely
+    # it is the responsibility of the celery worker to clear the value
 
-    else:
-        current_app.logger.error("%s - Unknown log_type %r",
-            request.remote_addr, log_type
-        )
-        current_app.logger.info(json.dumps(data))
-        # still need to write last_checkin, last_ip
-        db.session.add(node)
-        db.session.commit()
+    key = "{0}:result:{1}".format(request.endpoint, uuid.uuid4())
+    cache.set(key, result, timeout=0)
+    process_result.delay(key)
 
     return jsonify(node_invalid=False)
 
@@ -265,15 +262,17 @@ def distributed_read(node=None):
 
     current_app.logger.info(
         "%s - %s checking in to retrieve distributed queries",
-        request.remote_addr, node
+        request.remote_addr, node['id']
     )
 
+    node = Node.get_by_id(node['id'])
     queries = node.get_new_queries()
 
-    # need to write last_checkin, last_ip, and update distributed
-    # query state
-    db.session.add(node)
-    db.session.commit()
+    # the previous call invokes `utils.assemble_distributed_queries`
+    # which added several DistributedQueryTask's to the db.session.
+    # we commit these changes in this call below
+
+    node.update(last_checkin=dt.datetime.utcnow(), last_ip=request.remote_addr)
 
     return jsonify(queries=queries, node_invalid=False)
 
@@ -288,6 +287,13 @@ def distributed_write(node=None):
 
     if current_app.debug:
         current_app.logger.debug(json.dumps(data, indent=2))
+
+    node = Node.get_by_id(node['id'])
+    node.update(
+        last_checkin=dt.datetime.utcnow(),
+        last_ip=request.remote_addr,
+        commit=False,
+    )
 
     for guid, results in data.get('queries', {}).items():
         task = DistributedQueryTask.query.filter(

@@ -376,7 +376,7 @@ class TestLogging:
         assert not resp.normal_body
         # assert resp.json == {'node_invalid': True}
 
-    def test_status_log_created_for_node(self, node, testapp):
+    def test_status_log_created_for_node(self, node, db, testapp):
         data = {
             'line': 1,
             'message': 'This is a test of the emergency broadcast system.',
@@ -394,6 +394,8 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert node.status_logs.count()
         assert node.status_logs[0].line == data['line']
         assert node.status_logs[0].message == data['message']
@@ -401,7 +403,7 @@ class TestLogging:
         assert node.status_logs[0].filename == data['filename']
         assert node.last_ip == '127.0.0.2'
 
-    def test_status_log_created_for_node_put(self, node, testapp):
+    def test_status_log_created_for_node_put(self, node, db, testapp):
         data = {
             'line': 1,
             'message': 'This is a test of the emergency broadcast system.',
@@ -419,6 +421,8 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert node.status_logs.count()
         assert node.status_logs[0].line == data['line']
         assert node.status_logs[0].message == data['message']
@@ -426,7 +430,7 @@ class TestLogging:
         assert node.status_logs[0].filename == data['filename']
         assert node.last_ip == '127.0.0.2'
 
-    def test_status_log_created_for_node_when_gzipped(self, node, testapp):
+    def test_status_log_created_for_node_when_gzipped(self, node, db, testapp):
         data = {
             'line': 1,
             'message': 'This is a test of the emergency broadcast system.',
@@ -452,6 +456,8 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert node.status_logs.count()
         assert node.status_logs[0].line == data['line']
         assert node.status_logs[0].message == data['message']
@@ -459,7 +465,7 @@ class TestLogging:
         assert node.status_logs[0].filename == data['filename']
         assert node.last_ip == '127.0.0.2'
 
-    def test_no_status_log_created_when_data_is_empty(self, node, testapp):
+    def test_no_status_log_created_when_data_is_empty(self, node, db, testapp):
         assert not node.status_logs.count()
 
         resp = testapp.post_json(url_for('api.logger'), {
@@ -470,10 +476,12 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert not node.status_logs.count()
         assert node.last_ip == '127.0.0.2'
 
-    def test_result_log_created_for_node(self, node, testapp):
+    def test_result_log_created_for_node(self, node, db, testapp):
         now = dt.datetime.utcnow()
 
         data = [
@@ -511,6 +519,8 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert node.result_logs.count() == 2
         assert node.last_ip == '127.0.0.2'
 
@@ -526,7 +536,7 @@ class TestLogging:
         assert removed.action == 'removed'
         assert removed.columns == data[0]['diffResults']['removed'][0]
 
-    def test_no_result_log_created_when_data_is_empty(self, node, testapp):
+    def test_no_result_log_created_when_data_is_empty(self, node, db, testapp):
         assert not node.result_logs.count()
 
         resp = testapp.post_json(url_for('api.logger'), {
@@ -537,10 +547,12 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert not node.result_logs.count()
         assert node.last_ip == '127.0.0.2'
 
-    def test_result_event_format(self, node, testapp):
+    def test_result_event_format(self, node, db, testapp):
         now = dt.datetime.utcnow()
         calendarTime = "%s %s" % (now.ctime(), "UTC")
         unixTime = now.strftime('%s')
@@ -606,6 +618,8 @@ class TestLogging:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert node.result_logs.count() == 4
         assert node.last_ip == '127.0.0.2'
 
@@ -615,7 +629,7 @@ class TestLogging:
             assert result.action == data[i]['action']
             assert result.columns == data[i]['columns']
 
-    def test_heterogeneous_result_format(self, node, testapp):
+    def test_heterogeneous_result_format(self, node, db, testapp):
 
         now = dt.datetime.utcnow()
         calendarTime = "%s %s" % (now.ctime(), "UTC")
@@ -675,6 +689,8 @@ class TestLogging:
         },
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
+
+        node = db.session.merge(node)
 
         assert node.result_logs.count() == 3
         assert node.last_ip == '127.0.0.2'
