@@ -219,7 +219,6 @@ class Cache(_Cache):
         return self.delete('node:node_key:{node_key}'.format(node_key=node_key))
 
 
-
 bcrypt = Bcrypt()
 cache = Cache()
 csrf = CsrfProtect()

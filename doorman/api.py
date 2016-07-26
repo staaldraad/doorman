@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 
-from flask import Blueprint, current_app, jsonify, request, g
+from flask import Blueprint, current_app, jsonify, request
 
 from doorman.database import db
 from doorman.extensions import cache
@@ -228,7 +228,7 @@ def configuration(node=None):
 def logger(node=None):
     '''
     Responsible for taking osquery result data from a node and
-    sending it to in-memory key/value store for result processing
+    sending it to an in-memory key/value store for result processing
     by background Celery workers.
     '''
     data = request.get_json()
@@ -242,12 +242,12 @@ def logger(node=None):
         'last_checkin': dt.datetime.utcnow(),
     }
 
-    # set this value in the cache indefinitely
+    # set this value in the cache indefinitely -
     # it is the responsibility of the celery worker to clear the value
 
     key = "{0}:result:{1}".format(request.endpoint, uuid.uuid4())
     cache.set(key, result, timeout=0)
-    process_result.delay(key)
+    process_result.delay('logger', key)
 
     return jsonify(node_invalid=False)
 
@@ -285,45 +285,20 @@ def distributed_write(node=None):
     '''
     data = request.get_json()
 
-    if current_app.debug:
+    if current_app.logger.isEnabledFor(logging.DEBUG):
         current_app.logger.debug(json.dumps(data, indent=2))
 
-    node = Node.get_by_id(node['id'])
-    node.update(
-        last_checkin=dt.datetime.utcnow(),
-        last_ip=request.remote_addr,
-        commit=False,
-    )
+    result = {
+        'data': data,
+        'remote_addr': request.remote_addr,
+        'last_checkin': dt.datetime.utcnow(),
+    }
 
-    for guid, results in data.get('queries', {}).items():
-        task = DistributedQueryTask.query.filter(
-            DistributedQueryTask.guid == guid,
-            DistributedQueryTask.status == DistributedQueryTask.PENDING,
-            DistributedQueryTask.node == node,
-        ).first()
+    # set this value in the cache indefinitely -
+    # it is the responsibility of the celery worker to clear the value
 
-        if not task:
-            current_app.logger.error(
-                "%s - Got result for distributed query not in PENDING "
-                "state: %s: %s",
-                request.remote_addr, guid, json.dumps(data)
-            )
-            continue
-
-        for columns in results:
-            result = DistributedQueryResult(
-                columns,
-                distributed_query=task.distributed_query,
-                distributed_query_task=task
-            )
-            db.session.add(result)
-        else:
-            task.status = DistributedQueryTask.COMPLETE
-            db.session.add(task)
-
-    else:
-        # need to write last_checkin, last_ip on node
-        db.session.add(node)
-        db.session.commit()
+    key = "{0}:distributed_result:{1}".format(request.endpoint, uuid.uuid4())
+    cache.set(key, result, timeout=0)
+    process_result.delay('distributed', key)
 
     return jsonify(node_invalid=False)
