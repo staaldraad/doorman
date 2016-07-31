@@ -412,6 +412,8 @@ class DistributedQueryTask(SurrogatePK, Model):
 
     guid = Column(db.String, nullable=False, unique=True)
     status = Column(db.Integer, default=0, nullable=False)
+
+    # holds datetime at which query is flipped to PENDING
     timestamp = Column(db.DateTime)
 
     distributed_query_id = reference_col('distributed_query', nullable=False)

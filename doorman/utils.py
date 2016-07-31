@@ -75,10 +75,7 @@ def assemble_packs(node):
 def assemble_distributed_queries(node):
     '''
     Retrieve all distributed queries assigned to a particular node
-    in the NEW state. This function will change the state of the
-    distributed query to PENDING, however will not commit the change.
-    It is the responsibility of the caller to commit or rollback on the
-    current database session.
+    in the NEW state.
     '''
     from doorman.models import DistributedQueryTask
     now = dt.datetime.utcnow()
@@ -91,14 +88,7 @@ def assemble_distributed_queries(node):
             continue
 
         queries[task.guid] = task.distributed_query.sql
-        task.update(status=DistributedQueryTask.PENDING,
-                    timestamp=dt.datetime.utcnow(),
-                    commit=False)
 
-        # add this query to the session, but don't commit until we're
-        # as sure as we possibly can be that it's been received by the
-        # osqueryd client. unfortunately, there are no guarantees though.
-        db.session.add(task)
     return queries
 
 

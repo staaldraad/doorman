@@ -795,7 +795,7 @@ class TestDistributedRead:
 
         assert q.not_before == not_before
 
-        datetime_patcher = mock.patch.object(doorman.utils.dt, 'datetime',
+        datetime_patcher = mock.patch.object(doorman.api.dt, 'datetime',
                                              mock.Mock(wraps=dt.datetime))
         mocked_datetime = datetime_patcher.start()
         mocked_datetime.utcnow.return_value = not_before - dt.timedelta(seconds=1)
