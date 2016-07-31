@@ -397,7 +397,11 @@ class DistributedQuery(SurrogatePK, Model):
     def __init___(self, sql, description=None, not_before=None):
         self.sql = sql
         self.description = description
-        self.not_before = not_before
+
+        if not_before is None:
+            self.timestamp = self.not_before = dt.datetime.utcnow()
+        else:
+            self.not_before = not_before
 
 
 class DistributedQueryTask(SurrogatePK, Model):

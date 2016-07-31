@@ -56,7 +56,7 @@ class Config(object):
     CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
     # This should be different than your broker URL (if using Redis as a broker)
-    CACHE_TYPE = 'redis'
+    CACHE_TYPE = 'doorman.extensions.redis'
     CACHE_KEY_PREFIX = 'doorman:'
     CACHE_REDIS_URL = 'redis://localhost:6379/1'
 

@@ -9,6 +9,7 @@ import uuid
 
 from flask import Blueprint, current_app, jsonify, request
 
+from doorman import tasks
 from doorman.database import db
 from doorman.extensions import cache
 from doorman.models import (
@@ -16,7 +17,6 @@ from doorman.models import (
     DistributedQueryTask, DistributedQueryResult,
     StatusLog,
 )
-from doorman.tasks import process_result
 
 
 blueprint = Blueprint('api', __name__)
@@ -64,10 +64,14 @@ def node_required(f):
                 )
                 return jsonify(node_invalid=True)
 
-            # cache indefinitely, until updated by a celery worker,
-            # or user in /manage clears it
             node = node.to_dict()
-            cache.set_cached_node(node_key, node, timeout=0)
+
+            # cache node information for two hours
+            cache.set_cached_node(node_key, node, timeout=7200)
+
+        else:
+            # cache node information += 2 hours
+            cache.refresh_cached_node_expiration(node_key, timeout=7200)
 
         return f(node=node, *args, **kwargs)
     return decorated_function
@@ -233,6 +237,11 @@ def logger(node=None):
     '''
     data = request.get_json()
 
+    current_app.logger.info(
+        "%s - %s checking in to log query results",
+        request.remote_addr, node['id']
+    )
+
     if current_app.logger.isEnabledFor(logging.DEBUG):
         current_app.logger.debug(json.dumps(data, indent=2))
 
@@ -245,9 +254,9 @@ def logger(node=None):
     # set this value in the cache indefinitely -
     # it is the responsibility of the celery worker to clear the value
 
-    key = "{0}:result:{1}".format(request.endpoint, uuid.uuid4())
+    key = "{0}:logger:{1}".format(request.endpoint, uuid.uuid4())
     cache.set(key, result, timeout=0)
-    process_result.delay('logger', key)
+    tasks.process_result.delay('logger', key)
 
     return jsonify(node_invalid=False)
 
@@ -268,11 +277,19 @@ def distributed_read(node=None):
     node = Node.get_by_id(node['id'])
     queries = node.get_new_queries()
 
-    # the previous call invokes `utils.assemble_distributed_queries`
-    # which added several DistributedQueryTask's to the db.session.
-    # we commit these changes in this call below
+    result = {
+        'node_key': node.node_key,
+        'remote_addr': request.remote_addr,
+        'last_checkin': dt.datetime.utcnow(),
+        'guids': queries.keys(),
+    }
 
-    node.update(last_checkin=dt.datetime.utcnow(), last_ip=request.remote_addr)
+    # set this value in the cache indefinitely -
+    # it is the responsibility of the celery worker to clear the value
+
+    key = "{0}:distributed_read:{1}".format(request.endpoint, uuid.uuid4())
+    cache.set(key, result, timeout=0)
+    tasks.set_distributed_query_tasks_as_pending.delay(key)
 
     return jsonify(queries=queries, node_invalid=False)
 
@@ -284,6 +301,11 @@ def distributed_write(node=None):
     '''
     '''
     data = request.get_json()
+
+    current_app.logger.info(
+        "%s - %s checking in to log distributed query results",
+        request.remote_addr, node['id']
+    )
 
     if current_app.logger.isEnabledFor(logging.DEBUG):
         current_app.logger.debug(json.dumps(data, indent=2))
@@ -297,8 +319,8 @@ def distributed_write(node=None):
     # set this value in the cache indefinitely -
     # it is the responsibility of the celery worker to clear the value
 
-    key = "{0}:distributed_result:{1}".format(request.endpoint, uuid.uuid4())
+    key = "{0}:distributed_write:{1}".format(request.endpoint, uuid.uuid4())
     cache.set(key, result, timeout=0)
-    process_result.delay('distributed', key)
+    tasks.process_result.delay('distributed', key)
 
     return jsonify(node_invalid=False)

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
-from time import mktime
 import json
 
 from doorman.compat import string_types
@@ -11,7 +10,7 @@ class DJSONEncoder(json.JSONEncoder):
         if isinstance(obj, datetime):
             return {
                 '__type__': '__datetime__',
-                'epoch': int(mktime(obj.timetuple()))
+                'epoch': float(obj.strftime("%s.%f"))
             }
         else:
             return json.JSONEncoder.default(self, obj)
@@ -31,6 +30,8 @@ def djson_dumps(obj):
 
 # Decoder function
 def djson_loads(s):
+    if s is None:
+         return
     if not isinstance(s, string_types):
         s = s.decode('utf-8')
     return json.loads(s, object_hook=djson_decoder)

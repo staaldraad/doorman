@@ -724,6 +724,8 @@ class TestDistributedRead:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert not resp.json['queries']
         assert node.last_ip == '127.0.0.2'
 
@@ -738,6 +740,10 @@ class TestDistributedRead:
         },
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
+
+        node = db.session.merge(node)
+        q = db.session.merge(q)
+        t = db.session.merge(t)
 
         assert t.status == DistributedQueryTask.PENDING
         assert t.guid in resp.json['queries']
@@ -756,6 +762,8 @@ class TestDistributedRead:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert not resp.json['queries']
         assert node.last_ip == '127.0.0.2'
 
@@ -769,6 +777,8 @@ class TestDistributedRead:
         },
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
+
+        node = db.session.merge(node)
 
         assert not resp.json['queries']
         assert node.last_ip == '127.0.0.2'
@@ -796,6 +806,8 @@ class TestDistributedRead:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
+        node = db.session.merge(node)
+
         assert not resp.json['queries']
         assert node.last_ip == '127.0.0.2'
 
@@ -806,6 +818,10 @@ class TestDistributedRead:
         },
         extra_environ=dict(REMOTE_ADDR='127.0.0.3')
         )
+
+        node = db.session.merge(node)
+        q = db.session.merge(q)
+        t = db.session.merge(t)
 
         assert t.status == DistributedQueryTask.PENDING
         assert t.timestamp == not_before + dt.timedelta(seconds=1)
@@ -928,8 +944,8 @@ class TestDistributedWrite:
 
         node = db.session.merge(node)
         q = db.session.merge(q)
-        t = db.session.merge(t)
         r = db.session.merge(r)
+        t = db.session.merge(t)
 
         assert q.results
         assert len(q.results) == 1
@@ -958,8 +974,8 @@ class TestDistributedWrite:
         extra_environ=dict(REMOTE_ADDR='127.0.0.2')
         )
 
-        node = db.session.merge(node)
         foo = db.session.merge(foo)
+        node = db.session.merge(node)
         q1 = db.session.merge(q1)
         q2 = db.session.merge(q2)
         t1 = db.session.merge(t1)
@@ -980,8 +996,8 @@ class TestDistributedWrite:
         extra_environ=dict(REMOTE_ADDR='127.0.0.3')
         )
 
-        node = db.session.merge(node)
         foo = db.session.merge(foo)
+        node = db.session.merge(node)
         t2 = db.session.merge(t2)
 
         assert t2.results

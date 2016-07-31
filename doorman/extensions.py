@@ -202,13 +202,71 @@ def make_celery(app, celery):
     return celery
 
 
+def redis(app, config, *args, **kwargs):
+    from doorman.celery_serializer import djson_dumps, djson_loads
+    from werkzeug.contrib.cache import RedisCache as _RedisCache
+    from redis import from_url as redis_from_url
+
+    # https://github.com/thadeusb/flask-cache/blob/master/flask_cache/backends.py#L60
+
+    kwargs.update(dict(
+        host=config.get('CACHE_REDIS_HOST', 'localhost'),
+        port=config.get('CACHE_REDIS_PORT', 6379),
+    ))
+    password = config.get('CACHE_REDIS_PASSWORD')
+    if password:
+        kwargs['password'] = password
+
+    key_prefix = config.get('CACHE_KEY_PREFIX')
+    if key_prefix:
+        kwargs['key_prefix'] = key_prefix
+
+    db_number = config.get('CACHE_REDIS_DB')
+    if db_number:
+        kwargs['db'] = db_number
+
+    redis_url = config.get('CACHE_REDIS_URL')
+    if redis_url:
+        kwargs['host'] = redis_from_url(
+            redis_url,
+            db=kwargs.pop('db', None),
+        )
+
+    class RedisCache(_RedisCache):
+        def __init__(self, *args, **kwargs):
+            _RedisCache.__init__(self, *args, **kwargs)
+
+        def dump_object(self, value):
+            return djson_dumps(value)
+
+        def load_object(self, value):
+            return djson_loads(value)
+
+        def _normalize_timeout(self, timeout):
+            if timeout is None:
+                timeout = self.default_timeout
+            elif timeout == 0:
+                timeout = -1
+            return timeout
+
+        def expire(self, key, timeout=None):
+            timeout = self._normalize_timeout(timeout)
+            return self._client.expire(name=key, time=timeout)
+
+    return RedisCache(**kwargs)
+
+
 class Cache(_Cache):
+
+    def make_node_cache_key(self, node_key):
+        return 'node:node_key:{node_key}'.format(node_key=node_key)
+
     def get_cached_node(self, node_key):
-        return self.get('node:node_key:{node_key}'.format(node_key=node_key))
+        return self.get(self.make_node_cache_key(node_key))
 
     def set_cached_node(self, node_key, node, timeout=0):
         return self.set(
-            'node:node_key:{node_key}'.format(node_key=node_key),
+            self.make_node_cache_key(node_key),
             node,
             timeout=timeout
         )
@@ -216,7 +274,13 @@ class Cache(_Cache):
     update_cached_node = set_cached_node
 
     def delete_cached_node(self, node_key):
-        return self.delete('node:node_key:{node_key}'.format(node_key=node_key))
+        return self.delete(self.make_node_cache_key(node_key))
+
+    def refresh_cached_node_expiration(self, node_key, timeout=None):
+        return self.cache.expire(
+            self.make_node_cache_key(node_key),
+            timeout=timeout
+        )
 
 
 bcrypt = Bcrypt()

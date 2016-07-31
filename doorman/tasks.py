@@ -4,7 +4,6 @@ from flask import current_app
 
 import json
 
-
 from doorman.database import db
 from doorman.extensions import cache, log_tee
 from doorman.models import (
@@ -119,3 +118,36 @@ def learn_from_result(result, node):
 def example_task(one, two):
     print('Adding {0} and {1}'.format(one, two))
     return one + two
+
+
+@celery.task()
+def set_distributed_query_tasks_as_pending(task_key):
+
+    current_app.logger.debug("Fetching new tasks from %s", task_key)
+    task = cache.get(task_key)
+
+    if not task:
+        current_app.logger.error("No data at %s", task_key)
+        return
+
+    node_key = task.pop('node_key')
+    last_checkin = task.pop('last_checkin')
+    remote_addr = task.pop('remote_addr')
+    guids = task.pop('guids')
+
+    current_app.logger.debug("Setting %s to PENDING", ','.join(guids))
+
+    node = Node.query.filter_by(node_key=node_key).one()
+    node.update(last_checkin=last_checkin, last_ip=remote_addr)
+
+    result = db.session.query(DistributedQueryTask) \
+        .filter(DistributedQueryTask.guid.in_(guids)) \
+        .update({
+            'timestamp': last_checkin,
+            'status': DistributedQueryTask.PENDING
+        }, synchronize_session='fetch')
+    db.session.commit()
+
+    current_app.logger.debug("Deleting new tasks from cache for key %s", task_key)
+    cache.delete(task_key)
+    return result
