@@ -281,7 +281,7 @@ def distributed_read(node=None):
         'node_key': node.node_key,
         'remote_addr': request.remote_addr,
         'last_checkin': dt.datetime.utcnow(),
-        'guids': queries.keys(),
+        'guids': list(queries),
     }
 
     # set this value in the cache indefinitely -
