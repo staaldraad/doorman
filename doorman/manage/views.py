@@ -33,9 +33,9 @@ from doorman.models import (
     FilePath, Node, Pack, Query, Tag, Rule, StatusLog
 )
 from doorman.extensions import cache
-from doorman.utils import (
-    create_query_pack_from_upload, flash_errors, get_paginate_options
-)
+from doorman.utils import flash_errors
+
+import doorman.utils as utils
 
 
 blueprint = Blueprint('manage', __name__,
@@ -69,7 +69,7 @@ def nodes(page=1, status='active'):
     else:
         nodes = Node.query.filter_by(is_active=True)
 
-    nodes = get_paginate_options(
+    nodes = utils.get_paginate_options(
         request,
         Node,
         ('id', 'host_identifier', 'enrolled_on', 'last_checkin'),
@@ -183,10 +183,10 @@ def get_node(node_id):
 
         if not node.is_active:
             current_app.logger.debug("Clearing node from cache %s", node)
-            cache.delete_cached_node(node.node_key)
+            utils.delete_cached_node(node.node_key)
         else:
             current_app.logger.debug("Updating node in cache %s", node)
-            cache.update_cached_node(node.node_key, node.to_dict())
+            utils.update_cached_node(node.node_key, node.to_dict())
 
         if request.is_xhr:
             return '', 204
@@ -212,7 +212,7 @@ def node_logs(node_id, page=1):
     node = Node.query.filter(Node.id == node_id).first_or_404()
     status_logs = StatusLog.query.filter_by(node=node)
 
-    status_logs = get_paginate_options(
+    status_logs = utils.get_paginate_options(
         request,
         StatusLog,
         ('line', 'message', 'severity', 'filename'),
@@ -271,7 +271,7 @@ def packs():
 def add_pack():
     form = UploadPackForm()
     if form.validate_on_submit():
-        pack = create_query_pack_from_upload(form.pack)
+        pack = utils.create_query_pack_from_upload(form.pack)
 
         # Only redirect back to the pack list if everything was successful
         if pack is not None:
@@ -346,7 +346,7 @@ def distributed(node_id=None, status=None, page=1):
         node = Node.query.filter_by(id=node_id).first_or_404()
         tasks = tasks.filter_by(node_id=node.id)
 
-    tasks = get_paginate_options(
+    tasks = utils.get_paginate_options(
         request,
         DistributedQueryTask,
         ('id', 'status', 'timestamp'),
@@ -385,7 +385,7 @@ def distributed_results(distributed_id, status=None, page=1):
     elif status == 'complete':
         tasks = tasks.filter_by(status=DistributedQueryTask.COMPLETE)
 
-    tasks = get_paginate_options(
+    tasks = utils.get_paginate_options(
         request,
         DistributedQueryTask,
         ('id', 'status', 'timestamp'),

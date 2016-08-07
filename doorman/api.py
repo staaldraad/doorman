@@ -10,12 +10,17 @@ import uuid
 from flask import Blueprint, current_app, jsonify, request
 
 from doorman import tasks
-from doorman.database import db
-from doorman.extensions import cache
 from doorman.models import (
     Node, Tag,
     DistributedQueryTask, DistributedQueryResult,
     StatusLog,
+)
+from doorman.utils import (
+    CachedNode,
+    assemble_distributed_queries,
+    get_cached_node,
+    set_cached_node,
+    refresh_cached_node_expiration,
 )
 
 
@@ -45,7 +50,7 @@ def node_required(f):
             return ""
 
         node_key = request_json.get('node_key')
-        node = cache.get_cached_node(node_key)
+        node = get_cached_node(node_key)
 
         if not node:
             node = Node.query.filter_by(node_key=node_key).first()
@@ -67,13 +72,9 @@ def node_required(f):
             node = node.to_dict()
 
             # cache node information for two hours
-            cache.set_cached_node(node_key, node, timeout=7200)
+            set_cached_node(node_key, node, timeout=7200)
 
-        else:
-            # cache node information += 2 hours
-            cache.refresh_cached_node_expiration(node_key, timeout=7200)
-
-        return f(node=node, *args, **kwargs)
+        return f(node=CachedNode(**node), *args, **kwargs)
     return decorated_function
 
 
@@ -208,7 +209,7 @@ def enroll():
 @blueprint.route('/config', methods=['POST', 'PUT'])
 @blueprint.route('/v1/config', methods=['POST', 'PUT'])
 @node_required
-def configuration(node=None):
+def configuration(node):
     '''
     Retrieve an osquery configuration for a given node.
 
@@ -216,12 +217,17 @@ def configuration(node=None):
     '''
     current_app.logger.info(
         "%s - %s checking in to retrieve a new configuration",
-        request.remote_addr, node['id']
+        request.remote_addr, node.id
     )
 
-    node = Node.get_by_id(node['id'])
-    node.update(last_checkin=dt.datetime.utcnow(), last_ip=request.remote_addr)
+    node = Node.get_by_id(node.id)
     config = node.get_config()
+
+    tasks.refresh_node.delay(
+        node_id=node.id,
+        remote_addr=request.remote_addr,
+        last_checkin=dt.datetime.utcnow()
+    )
 
     return jsonify(config, node_invalid=False)
 
@@ -229,34 +235,29 @@ def configuration(node=None):
 @blueprint.route('/log', methods=['POST', 'PUT'])
 @blueprint.route('/v1/log', methods=['POST', 'PUT'])
 @node_required
-def logger(node=None):
+def logger(node):
     '''
-    Responsible for taking osquery result data from a node and
-    sending it to an in-memory key/value store for result processing
-    by background Celery workers.
+    Ingest results for scheduled queries from an osquery endpoint
+    and send it off to a background task to be processed by a
+    Celery worker.
     '''
     data = request.get_json()
 
     current_app.logger.info(
         "%s - %s checking in to log query results",
-        request.remote_addr, node['id']
+        request.remote_addr, node.id
     )
 
     if current_app.logger.isEnabledFor(logging.DEBUG):
         current_app.logger.debug(json.dumps(data, indent=2))
 
-    result = {
-        'data': data,
-        'remote_addr': request.remote_addr,
-        'last_checkin': dt.datetime.utcnow(),
-    }
-
-    # set this value in the cache indefinitely -
-    # it is the responsibility of the celery worker to clear the value
-
-    key = "{0}:logger:{1}".format(request.endpoint, uuid.uuid4())
-    cache.set(key, result, timeout=0)
-    tasks.process_result.delay('logger', key)
+    tasks.process_result.delay(
+        node_id=node.id,
+        remote_addr=request.remote_addr,
+        last_checkin=dt.datetime.utcnow(),
+        log_type=data.get('log_type'),
+        data=data
+    )
 
     return jsonify(node_invalid=False)
 
@@ -264,32 +265,25 @@ def logger(node=None):
 @blueprint.route('/distributed/read', methods=['POST', 'PUT'])
 @blueprint.route('/v1/distributed/read', methods=['POST', 'PUT'])
 @node_required
-def distributed_read(node=None):
+def distributed_read(node):
     '''
     '''
     data = request.get_json()
 
     current_app.logger.info(
         "%s - %s checking in to retrieve distributed queries",
-        request.remote_addr, node['id']
+        request.remote_addr, node.id
     )
 
-    node = Node.get_by_id(node['id'])
-    queries = node.get_new_queries()
+    node = Node.get_by_id(node.id)
+    queries = assemble_distributed_queries(node)
 
-    result = {
-        'node_key': node.node_key,
-        'remote_addr': request.remote_addr,
-        'last_checkin': dt.datetime.utcnow(),
-        'guids': list(queries),
-    }
-
-    # set this value in the cache indefinitely -
-    # it is the responsibility of the celery worker to clear the value
-
-    key = "{0}:distributed_read:{1}".format(request.endpoint, uuid.uuid4())
-    cache.set(key, result, timeout=0)
-    tasks.set_distributed_query_tasks_as_pending.delay(key)
+    tasks.set_distributed_query_tasks_as_pending.delay(
+        node_id=node.id,
+        remote_addr=request.remote_addr,
+        last_checkin=dt.datetime.utcnow(),
+        guids=list(queries)
+    )
 
     return jsonify(queries=queries, node_invalid=False)
 
@@ -297,30 +291,28 @@ def distributed_read(node=None):
 @blueprint.route('/distributed/write', methods=['POST', 'PUT'])
 @blueprint.route('/v1/distributed/write', methods=['POST', 'PUT'])
 @node_required
-def distributed_write(node=None):
+def distributed_write(node):
     '''
+    Ingest results of a distributed query from an osquery endpoint
+    and send it off to a background task to be processed by a
+    Celery worker.
     '''
     data = request.get_json()
 
     current_app.logger.info(
         "%s - %s checking in to log distributed query results",
-        request.remote_addr, node['id']
+        request.remote_addr, node.id
     )
 
     if current_app.logger.isEnabledFor(logging.DEBUG):
         current_app.logger.debug(json.dumps(data, indent=2))
 
-    result = {
-        'data': data,
-        'remote_addr': request.remote_addr,
-        'last_checkin': dt.datetime.utcnow(),
-    }
-
-    # set this value in the cache indefinitely -
-    # it is the responsibility of the celery worker to clear the value
-
-    key = "{0}:distributed_write:{1}".format(request.endpoint, uuid.uuid4())
-    cache.set(key, result, timeout=0)
-    tasks.process_result.delay('distributed', key)
+    tasks.process_result.delay(
+        node_id=node.id,
+        remote_addr=request.remote_addr,
+        last_checkin=dt.datetime.utcnow(),
+        log_type='distributed',
+        data=data
+    )
 
     return jsonify(node_invalid=False)

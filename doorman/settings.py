@@ -258,6 +258,7 @@ class TestConfig(Config):
 
     DOORMAN_AUTH_METHOD = None
     CELERY_ALWAYS_EAGER = True
+    CELERY_EAGER_PROPAGATES_EXCEPTIONS = True
 
 
 if os.environ.get('DYNO'):

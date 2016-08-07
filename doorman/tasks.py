@@ -19,24 +19,15 @@ celery = Celery(__name__)
 
 
 @celery.task()
-def process_result(result_type, result_key):
+def process_result(node_id=None, remote_addr=None, last_checkin=None,
+    log_type=None, data=None):
 
-    current_app.logger.debug("Fetching %s results for %s", result_type, result_key)
-    result = cache.get(result_key)
+    node = Node.get_by_id(node_id)
+    refresh_node(node_id=node_id, remote_addr=remote_addr, last_checkin=last_checkin)
 
-    if not result:
-        current_app.logger.error("No data at %s", result_key)
-        return
+    current_app.logger.debug("Processing %s result from %s", log_type, node)
 
-    last_checkin = result.pop('last_checkin')
-    remote_addr = result.pop('remote_addr')
-    data = result.pop('data')
-
-    node_key = data.get('node_key')
-    node = Node.query.filter_by(node_key=node_key).one()
-    node.update(last_checkin=last_checkin, last_ip=remote_addr)
-
-    if result_type == 'logger' and data['log_type'] == 'status':
+    if log_type == 'status':
         log_level = current_app.config['DOORMAN_MINIMUM_OSQUERY_LOG_LEVEL']
 
         for item in data.get('data', []):
@@ -49,7 +40,7 @@ def process_result(result_type, result_key):
 
         log_tee.handle_status(data, host_identifier=node.host_identifier)
 
-    elif result_type == 'logger' and data['log_type'] == 'result':
+    elif log_type == 'result':
         db.session.bulk_save_objects(utils.process_result(data, node.id))
         db.session.commit()
 
@@ -58,7 +49,7 @@ def process_result(result_type, result_key):
 
         log_tee.handle_result(data, host_identifier=node.host_identifier)
 
-    elif result_type == 'distributed':
+    elif log_type == 'distributed':
         for guid, results in data.get('queries', {}).items():
 
             task = DistributedQueryTask.query.filter(
@@ -95,10 +86,6 @@ def process_result(result_type, result_key):
         )
         current_app.logger.info(json.dumps(data))
 
-    # made it this far, so let's delete the result from cache
-
-    current_app.logger.debug("Deleting result from cache for key %s", result_key)
-    cache.delete(result_key)
     return
 
 
@@ -121,33 +108,29 @@ def example_task(one, two):
 
 
 @celery.task()
-def set_distributed_query_tasks_as_pending(task_key):
+def set_distributed_query_tasks_as_pending(node_id=None, remote_addr=None, last_checkin=None, guids=None):
+    node = Node.get_by_id(node_id)
+    refresh_node(node_id=node_id, remote_addr=remote_addr, last_checkin=last_checkin)
 
-    current_app.logger.debug("Fetching new tasks from %s", task_key)
-    task = cache.get(task_key)
+    result = 0
 
-    if not task:
-        current_app.logger.error("No data at %s", task_key)
-        return
+    if guids:
+        current_app.logger.debug("Setting %s to PENDING", ','.join(guids))
 
-    node_key = task.pop('node_key')
-    last_checkin = task.pop('last_checkin')
-    remote_addr = task.pop('remote_addr')
-    guids = task.pop('guids')
+        result = db.session.query(DistributedQueryTask) \
+            .filter(DistributedQueryTask.guid.in_(guids)) \
+            .update({
+                'timestamp': last_checkin,
+                'status': DistributedQueryTask.PENDING
+            }, synchronize_session='fetch')
+        db.session.commit()
 
-    current_app.logger.debug("Setting %s to PENDING", ','.join(guids))
-
-    node = Node.query.filter_by(node_key=node_key).one()
-    node.update(last_checkin=last_checkin, last_ip=remote_addr)
-
-    result = db.session.query(DistributedQueryTask) \
-        .filter(DistributedQueryTask.guid.in_(guids)) \
-        .update({
-            'timestamp': last_checkin,
-            'status': DistributedQueryTask.PENDING
-        }, synchronize_session='fetch')
-    db.session.commit()
-
-    current_app.logger.debug("Deleting new tasks from cache for key %s", task_key)
-    cache.delete(task_key)
     return result
+
+
+@celery.task()
+def refresh_node(node_id=None, remote_addr=None, last_checkin=None):
+    node = Node.get_by_id(node_id)
+    node.update(last_checkin=last_checkin, last_ip=remote_addr)
+    utils.refresh_cached_node_expiration(node.node_key, timeout=7200)
+    return

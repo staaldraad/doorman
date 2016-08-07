@@ -13,6 +13,7 @@ import six
 from flask import current_app, flash
 
 from doorman.database import db
+from doorman.extensions import cache
 from doorman.models import ResultLog
 
 
@@ -404,3 +405,31 @@ class DateTimeEncoder(json.JSONEncoder):
             return o.isoformat()
 
         return json.JSONEncoder.default(self, o)
+
+
+CachedNode = namedtuple('CachedNode', [
+    'id', 'display_name', 'enrolled_on', 'host_identifier', 'last_checkin',
+    'node_info', 'last_ip', 'is_active']
+)
+
+
+def _make_node_cache_key(node_key):
+    return 'node_key:{node_key}'.format(node_key=node_key)
+
+def get_cached_node(node_key):
+    return cache.get(_make_node_cache_key(node_key))
+
+def set_cached_node(node_key, node_dict, timeout=None):
+    return cache.set(
+        _make_node_cache_key(node_key),
+        node_dict,
+        timeout=timeout
+    )
+
+update_cached_node = set_cached_node
+
+def delete_cached_node(node_key):
+    return cache.delete(_make_node_cache_key(node_key))
+
+def refresh_cached_node_expiration(node_key, timeout=None):
+    return cache.expire(_make_node_cache_key(node_key), timeout=timeout)

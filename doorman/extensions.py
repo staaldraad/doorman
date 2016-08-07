@@ -258,29 +258,12 @@ def redis(app, config, *args, **kwargs):
 
 class Cache(_Cache):
 
-    def make_node_cache_key(self, node_key):
-        return 'node:node_key:{node_key}'.format(node_key=node_key)
+    @property
+    def redis(self):
+        return self.cache._client
 
-    def get_cached_node(self, node_key):
-        return self.get(self.make_node_cache_key(node_key))
-
-    def set_cached_node(self, node_key, node, timeout=0):
-        return self.set(
-            self.make_node_cache_key(node_key),
-            node,
-            timeout=timeout
-        )
-
-    update_cached_node = set_cached_node
-
-    def delete_cached_node(self, node_key):
-        return self.delete(self.make_node_cache_key(node_key))
-
-    def refresh_cached_node_expiration(self, node_key, timeout=None):
-        return self.cache.expire(
-            self.make_node_cache_key(node_key),
-            timeout=timeout
-        )
+    def expire(self, *args, **kwargs):
+        return self.cache.expire(*args, **kwargs)
 
 
 bcrypt = Bcrypt()
