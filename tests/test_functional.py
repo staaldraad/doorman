@@ -786,7 +786,7 @@ class TestDistributedRead:
     def test_distributed_query_read_not_before(self, db, node, testapp):
         import doorman.utils
 
-        now = dt.datetime.utcnow()
+        now = dt.datetime.utcnow().replace(microsecond=0)
         not_before = now + dt.timedelta(days=1)
 
         q = DistributedQuery.create(sql='select * from osquery_info;',
