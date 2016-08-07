@@ -249,7 +249,7 @@ class TestConfiguration:
             'node_key': node.node_key})
         assert resp.json['node_invalid'] is True
 
-    def test_configuration_has_all_required_values(self, node, testapp):
+    def test_configuration_has_all_required_values(self, db, node, testapp):
         tag = TagFactory(value='foobar')
         pack = PackFactory(name='foobar')
         pack.tags.append(tag)
@@ -266,6 +266,9 @@ class TestConfiguration:
 
         assert resp.json['node_invalid'] is False
 
+        pack = db.session.merge(pack)
+        query = db.session.merge(query)
+
         assert pack.name in resp.json['packs']
         assert list(resp.json['packs'].keys()) == [pack.name]  # should be the only key
 
@@ -279,7 +282,7 @@ class TestConfiguration:
         assert 'schedule' in resp.json
         assert 'file_paths' in resp.json
 
-    def test_configuration_will_respect_removed_false(self, node, testapp):
+    def test_configuration_will_respect_removed_false(self, db, node, testapp):
         tag = TagFactory(value='foobar')
         pack = PackFactory(name='foobar')
         pack.tags.append(tag)
@@ -294,15 +297,21 @@ class TestConfiguration:
         resp = testapp.post_json(url_for('api.configuration'), {
             'node_key': node.node_key})
 
+        pack = db.session.merge(pack)
+        query = db.session.merge(query)
+
         # as above, but 'removed': false
         assert resp.json['packs'][pack.name]['queries'][query.name]['query'] == sql
         assert resp.json['packs'][pack.name]['queries'][query.name]['removed'] is False
 
-    def test_valid_configuration(self, node, testapp):
+    def test_valid_configuration(self, db, node, testapp):
         resp = testapp.post_json(url_for('api.configuration'), {
-            'node_key': node.node_key})
+            'node_key': node.node_key
+        })
 
         assert resp.json['node_invalid'] is False
+
+        node = db.session.merge(node)
 
         first_config = resp.json
         first_config.pop('node_invalid')
@@ -337,6 +346,8 @@ class TestConfiguration:
 
         resp = testapp.post_json(url_for('api.configuration'), {
             'node_key': node.node_key})
+
+        node = db.session.merge(node)
 
         assert resp.json['node_invalid'] is False
 
