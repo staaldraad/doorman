@@ -28,6 +28,7 @@ from .forms import (
     UpdateNodeForm,
 )
 from doorman.database import db
+from doorman.manage.utils import add_distributed_query
 from doorman.models import (
     DistributedQuery, DistributedQueryTask, DistributedQueryResult,
     FilePath, Node, Pack, Query, Tag, Rule, StatusLog
@@ -448,15 +449,12 @@ def add_distributed():
                 ).all()
             )
 
-        query = DistributedQuery.create(sql=form.sql.data,
-                                        description=form.description.data,
-                                        not_before=form.not_before.data)
-
-        for node in nodes:
-            task = DistributedQueryTask(node=node, distributed_query=query)
-            db.session.add(task)
-        else:
-            db.session.commit()
+        query = add_distributed_query(
+            form.sql.data,
+            form.description.data,
+            form.not_before.data,
+            *nodes
+        )
 
         return redirect(url_for('manage.distributed', status='new'))
 
