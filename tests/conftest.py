@@ -2,14 +2,14 @@
 """Defines fixtures available to all tests."""
 
 import pytest
-from webtest import TestApp
+from flask_webtest import TestApp
 
 from doorman.application import create_app
 from doorman.database import db as _db
 from doorman.models import Rule
 from doorman.settings import TestConfig
 
-from .factories import NodeFactory, RuleFactory
+from .factories import NodeFactory, PackFactory, RuleFactory, TagFactory
 
 
 @pytest.yield_fixture(scope='function')
@@ -44,14 +44,14 @@ def api():
 
 
 @pytest.fixture(scope='function')
-def testapp(app):
+def testapp(app, db):
     """A Webtest app."""
-    return TestApp(app)
+    return TestApp(app, db)
 
 
 @pytest.fixture(scope='function')
-def testapi(api):
-    return TestApp(api)
+def testapi(api, db):
+    return TestApp(api, db)
 
 
 @pytest.yield_fixture(scope='function')
@@ -86,3 +86,22 @@ def rule(db):
     )
     db.session.commit()
     return rule
+
+
+@pytest.fixture
+def pack(db):
+    pack = PackFactory(
+        name='foobar pack',
+        description='this is the foobar pack',
+    )
+    db.session.commit()
+    return pack
+
+
+@pytest.fixture
+def tag(db):
+    tag = TagFactory(
+        value='foobar'
+    )
+    db.session.commit()
+    return tag

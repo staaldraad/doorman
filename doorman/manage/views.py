@@ -317,6 +317,7 @@ def add_query():
                       description=form.description.data,
                       value=form.value.data,
                       removed=form.removed.data)
+        query.packs = Pack.query.filter(Pack.name.in_(form.packs.data)).all()
         query.tags = create_tags(*form.tags.data.splitlines())
         query.save()
 

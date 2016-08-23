@@ -2,6 +2,7 @@
 from copy import deepcopy
 from flask import url_for
 from sqlalchemy import and_
+from webtest import Upload
 import datetime as dt
 import gzip
 import io
@@ -1081,17 +1082,17 @@ class TestDistributedTable:
 class TestCreateQueryPackFromUpload:
 
     def test_pack_upload(self, testapp, db):
-        # resp = testapp.get(url_for('manage.add_pack'))
-        # form = resp.forms[]
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps(SAMPLE_PACK).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps(SAMPLE_PACK).encode('utf-8'))
+        resp = resp.form.submit()
 
         location = urlparse(resp.headers['Location'])
         locationhash = '#'.join((location.path, location.fragment))
         assert locationhash == url_for('manage.packs', _anchor='foo')
 
         resp = resp.follow()
+
+        resp.mustcontain('foo')
 
         assert resp.status_int == 200
 
@@ -1101,9 +1102,9 @@ class TestCreateQueryPackFromUpload:
         packdata = deepcopy(SAMPLE_PACK)
         packdata['queries']['schedule']['query'] = bad_query
 
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps(packdata).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps(packdata).encode('utf-8'))
+        resp = resp.form.submit()
 
         # This won't be a redirect, since it's an error.
         assert resp.status_int == 200
@@ -1118,9 +1119,9 @@ class TestCreateQueryPackFromUpload:
         assert innerText.strip() == msg
 
     def test_pack_upload_invalid_empty_object(self, testapp, db):
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps({}).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps({}).encode('utf-8'))
+        resp = resp.form.submit()
 
         # This won't be a redirect, since it's an error.
         assert resp.status_int == 200
@@ -1135,9 +1136,9 @@ class TestCreateQueryPackFromUpload:
         assert innerText.strip() == msg
 
     def test_pack_upload_invalid_json(self, testapp, db):
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', 'bad data'.encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', 'bad data')
+        resp = resp.form.submit()
 
         # This won't be a redirect, since it's an error.
         assert resp.status_int == 200
@@ -1160,9 +1161,9 @@ class TestCreateQueryPackFromUpload:
         pack = Pack.query.filter(Pack.name == 'foo').all()
         assert not pack
 
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps(packdata).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps(packdata).encode('utf-8'))
+        resp = resp.form.submit()
 
         resp = resp.follow()
         assert resp.status_int == 200
@@ -1174,9 +1175,9 @@ class TestCreateQueryPackFromUpload:
         pack = PackFactory(name='foo')
         assert not pack.queries
 
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps(SAMPLE_PACK).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps(SAMPLE_PACK).encode('utf-8'))
+        resp = resp.form.submit()
 
         resp = resp.follow()
         assert resp.status_int == 200
@@ -1192,9 +1193,9 @@ class TestCreateQueryPackFromUpload:
         packdata = deepcopy(SAMPLE_PACK)
         packdata['queries']['foobar'] = query.to_dict()
 
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps(packdata).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps(packdata).encode('utf-8'))
+        resp = resp.form.submit()
 
         resp = resp.follow()
         assert resp.status_int == 200
@@ -1215,9 +1216,9 @@ class TestCreateQueryPackFromUpload:
         # change the sql
         query.update(sql='select * from foo;')
 
-        resp = testapp.post(url_for('manage.add_pack'), upload_files=[
-            ('pack', 'foo.conf', json.dumps(packdata).encode('utf-8')),
-        ])
+        resp = testapp.get(url_for('manage.add_pack'))
+        resp.form['pack'] = Upload('foo.conf', json.dumps(packdata).encode('utf-8'))
+        resp = resp.form.submit()
 
         resp = resp.follow()
         assert resp.status_int == 200
@@ -1240,11 +1241,38 @@ class TestCreateQueryPackFromUpload:
 
 
 class TestCreateQuery:
-    pass
+    def test_create_query(self, testapp, node, pack, tag):
+        resp = testapp.get(url_for('manage.add_query'))
+        resp.form['name'] = 'foobar'
+        resp.form['sql'] = 'select * from osquery_info;'
+        resp.form['interval'] = 30
+        resp.form['platform'] = 'linux'
+        resp.form['description'] = 'This is a foobar description.'
+        resp.form['value'] = 'This query provides some value.'
+        resp.form['removed'] = False
+        resp.form['packs'] = [pack.name]
+        resp.form['tags'] = '\n'.join([tag.value, 'barbaz'])
+        resp = resp.form.submit()
+
+        assert resp.flashes == [('info', 'Created tag barbaz')]
+
+        query = Query.query.filter_by(name='foobar').one()
+        assert query.sql == 'select * from osquery_info;'
+        assert query.interval == 30
+        assert query.platform == 'linux'
+        assert query.description == 'This is a foobar description.'
+        assert query.value == 'This query provides some value.'
+        assert query.removed is False
+        assert pack in query.packs
+        assert tag in query.tags
 
 
 class TestCreateTag:
-    pass
+    def test_create_tag(self, testapp, tag):
+        resp = testapp.get(url_for('manage.add_tag'))
+        resp.form['value'] = '\n'.join([tag.value, 'barbaz'])
+        resp = resp.form.submit()
+        assert resp.flashes == [('info', 'Created tag barbaz')]
 
 
 class TestAddRule:
