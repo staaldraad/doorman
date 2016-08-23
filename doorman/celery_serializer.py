@@ -25,7 +25,7 @@ def djson_decoder(obj):
 
 # Encoder function
 def djson_dumps(obj):
-    return json.dumps(obj, cls=DJSONEncoder)
+    return json.dumps(obj, cls=DJSONEncoder, separators=(',', ':'))
 
 
 # Decoder function

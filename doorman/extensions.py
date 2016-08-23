@@ -249,7 +249,15 @@ def redis(app, config, *args, **kwargs):
                 timeout = -1
             return timeout
 
+        def _normalize_key(self, key):
+            from werkzeug._compat import to_native
+            key = to_native(key)
+            if self.key_prefix:
+                key = self.key_prefix + key
+            return key
+
         def expire(self, key, timeout=None):
+            key = self._normalize_key(key)
             timeout = self._normalize_timeout(timeout)
             return self._client.expire(name=key, time=timeout)
 
