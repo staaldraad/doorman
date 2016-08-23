@@ -6,10 +6,11 @@ from flask_webtest import TestApp
 
 from doorman.application import create_app
 from doorman.database import db as _db
+from doorman.extensions import cache as _cache
 from doorman.models import Rule
 from doorman.settings import TestConfig
 
-from .factories import NodeFactory, PackFactory, RuleFactory, TagFactory
+from .factories import DistributedQueryFactory, NodeFactory, PackFactory, RuleFactory, TagFactory
 
 
 @pytest.yield_fixture(scope='function')
@@ -68,6 +69,16 @@ def db(app):
     _db.drop_all()
 
 
+@pytest.yield_fixture(scope='function')
+def cache(app):
+    _cache.app = app
+    with app.app_context():
+        _cache.clear()
+
+    yield _cache
+    _cache.clear()
+
+
 @pytest.fixture
 def node(db):
     """A node for the tests."""
@@ -86,6 +97,24 @@ def rule(db):
     )
     db.session.commit()
     return rule
+
+
+@pytest.yield_fixture(scope='function')
+def distributed_query(db, node):
+    node_id = node.id
+    query = DistributedQueryFactory(
+        sql='select * from osquery_info;',
+        description='this is a foobar query.',
+        create_tasks=(node, )
+    )
+    db.session.commit()
+    query_id = query.id
+    yield query
+
+    # clear query stuff from cache
+
+    _cache.redis.delete('doorman:distributed_queries_by_node:{0}'.format(node_id))
+    _cache.redis.delete('doorman:distributed_query:{0}'.format(query_id))
 
 
 @pytest.fixture

@@ -77,6 +77,17 @@ def process_result(node_id=None, remote_addr=None, last_checkin=None,
                 task.status = DistributedQueryTask.COMPLETE
                 db.session.add(task)
 
+            # this is a mapping of sql, not_before, and node id to task guids
+            # if only sql and not_before are present, no more nodes have
+            # this query task left
+
+            dq_cache_key = 'doorman:distributed_query:{0}'.format(
+                task.distributed_query.id
+            )
+
+            if cache.redis.hlen(dq_cache_key) <= 2:
+                cache.delete(dq_cache_key)
+
         else:
             db.session.commit()
 
@@ -124,6 +135,20 @@ def set_distributed_query_tasks_as_pending(node_id=None, remote_addr=None, last_
                 'status': DistributedQueryTask.PENDING
             }, synchronize_session='fetch')
         db.session.commit()
+
+        with cache.redis.pipeline() as pipe:
+            for guid in guids:
+                task = DistributedQueryTask.query.filter_by(guid=guid).one()
+                pipe.srem(
+                    'doorman:distributed_queries_by_node:{0}'.format(node.id),
+                    task.distributed_query.id
+                )
+                pipe.hdel(
+                    'doorman:distributed_query:{0}'.format(task.distributed_query.id),
+                    node.id
+                )
+            else:
+                pipe.execute()
 
     return result
 

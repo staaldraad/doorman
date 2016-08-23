@@ -92,6 +92,58 @@ def assemble_distributed_queries(node):
 
     return queries
 
+def assemble_distributed_queries_from_cache(node):
+    '''
+    Retrieve all distributed queries assigned to a particular node
+    in the NEW state.
+    '''
+    queries = {}
+
+    distributed_queries_by_node = 'doorman:distributed_queries_by_node:{0}'.format(node.id)
+    distributed_query = 'doorman:distributed_query:{0}'
+
+    # O(1) lookup cost
+
+    if not cache.redis.scard(distributed_queries_by_node):
+        current_app.logger.debug("No distributed queries for node %d", node.id)
+        return queries
+
+    now = dt.datetime.utcnow()
+
+    # O(N) lookup cost where N is set cardinality
+
+    for query_id in cache.redis.smembers(distributed_queries_by_node):
+
+        # O(3) lookup cost
+
+        sql, not_before, guid = cache.redis.hmget(
+            distributed_query.format(query_id),
+            'sql', 'not_before', node.id
+        )
+
+        if not sql:
+            current_app.logger.warning(
+                "No sql associated with this query id (%s)",
+                query_id
+            )
+            continue
+
+        not_before = dt.datetime.fromtimestamp(float(not_before or 0))
+        if not_before > now:
+            continue
+
+        if not guid:
+            current_app.logger.warning(
+                "No task for this node (%s), for this query id (%s)",
+                node.id,
+                query_id
+            )
+            continue
+
+        queries[guid] = sql
+
+    return queries
+
 
 def create_query_pack_from_upload(upload):
     '''

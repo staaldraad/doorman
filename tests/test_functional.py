@@ -20,7 +20,7 @@ from doorman.models import (
     DistributedQuery, DistributedQueryTask, DistributedQueryResult, Rule,
 )
 from doorman.settings import TestConfig
-from doorman.utils import learn_from_result
+from doorman.utils import assemble_distributed_queries_from_cache, learn_from_result
 
 from .factories import NodeFactory, PackFactory, QueryFactory, TagFactory
 
@@ -727,6 +727,88 @@ class TestLogging:
         # TODO add assertions for snapshot logs
 
 
+class TestDistributed:
+
+    def test_add_distributed_query(self, cache, db, node, testapp, tag):
+        foo = NodeFactory(host_identifier='foo')
+        foo.tags.append(tag)
+        foo.save()
+        not_before = dt.datetime(2216, 1, 15, 13, 47, 23)
+
+        resp = testapp.get(url_for('manage.add_distributed'))
+        resp.form['sql'] = 'select * from osquery_info;'
+        resp.form['description'] = 'this is a foobar query.'
+        resp.form['not_before'] = not_before.strftime("%Y-%m-%d %H:%M:%S")
+        resp.form['nodes'] = [node.node_key]  # include node explicitly
+        resp.form['tags'] = [tag.value]  # include foo implicitly by its tag
+
+        resp = resp.form.submit()
+
+        assert resp.status_code == 302
+
+        q = DistributedQuery.query.filter_by(description='this is a foobar query.').one()
+        assert q.sql == 'select * from osquery_info;'
+        assert q.not_before == not_before
+        assert q.tasks.count() == 2
+        # assert tag in q.tags
+
+        task_foo = q.tasks.filter_by(node=foo).first()
+        assert task_foo.node == foo
+
+        task_node = q.tasks.filter_by(node=node).first()
+        assert task_node.node == node
+
+        dq_cache_key = 'doorman:distributed_queries_by_node:{0}'
+        assert cache.redis.scard(dq_cache_key.format(node.id)) == 1
+        assert cache.redis.scard(dq_cache_key.format(foo.id)) == 1
+        assert str(q.id) in cache.redis.smembers(dq_cache_key.format(node.id))
+        assert str(q.id) in cache.redis.smembers(dq_cache_key.format(foo.id))
+
+        sql, not_before, guid_node, guid_foo = cache.redis.hmget(
+            'doorman:distributed_query:{0}'.format(q.id),
+            'sql', 'not_before', node.id, foo.id
+        )
+        assert sql == q.sql
+        assert not_before == q.not_before.strftime('%s.%f')
+        assert guid_node == task_node.guid
+        assert guid_foo == task_foo.guid
+
+    def test_assembling_distributed_queries(self, cache, db, node, testapp):
+        foo = NodeFactory(host_identifier='foo')
+        resp = testapp.post(url_for('manage.add_distributed'), {
+            'sql': 'select * from osquery_info;',
+            'description': 'this is a foobar query.',
+            'nodes': [node.node_key, foo.node_key],
+        })
+
+        q = DistributedQuery.query.filter_by(description='this is a foobar query.').one()
+        t = q.tasks.filter_by(node=node).first()
+
+        not_before = dt.datetime.utcnow() + dt.timedelta(days=1)
+        resp = testapp.post(url_for('manage.add_distributed'), {
+            'sql': 'select * from system_info;',
+            'description': 'this is a barbaz query.',
+            'not_before': not_before.strftime("%Y-%m-%d %H:%M:%S"),
+            'nodes': [node.node_key, foo.node_key],
+        })
+
+        queries = assemble_distributed_queries_from_cache(node)
+        assert queries == {t.guid: q.sql}
+
+        import doorman.utils
+        datetime_patcher = mock.patch.object(doorman.utils.dt, 'datetime',
+                                             mock.Mock(wraps=dt.datetime))
+        mocked_datetime = datetime_patcher.start()
+        mocked_datetime.utcnow.return_value = not_before + dt.timedelta(seconds=1)
+
+        queries = assemble_distributed_queries_from_cache(node)
+        for t in node.distributed_queries:
+            assert t.guid in queries
+            assert queries[t.guid] == t.distributed_query.sql
+
+        datetime_patcher.stop()
+
+
 class TestDistributedRead:
 
     def test_no_distributed_queries(self, db, node, testapp):
@@ -741,9 +823,9 @@ class TestDistributedRead:
         assert not resp.json['queries']
         assert node.last_ip == '127.0.0.2'
 
-    def test_distributed_query_read_new(self, db, node, testapp):
-        q = DistributedQuery.create(sql='select * from osquery_info;')
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
+    def test_distributed_query_read(self, cache, db, node, testapp, distributed_query):
+        q = distributed_query
+        t = q.tasks.first()
 
         assert t.status == DistributedQueryTask.NEW
 
@@ -763,25 +845,23 @@ class TestDistributedRead:
         assert t.timestamp > q.timestamp
         assert node.last_ip == '127.0.0.2'
 
-    def test_distributed_query_read_pending(self, db, node, testapp):
-        q = DistributedQuery.create(sql='select * from osquery_info;')
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
-        t.update(status=DistributedQueryTask.PENDING)
-
+        # this request gets no queries
         resp = testapp.post_json(url_for('api.distributed_read'), {
             'node_key': node.node_key,
         },
-        extra_environ=dict(REMOTE_ADDR='127.0.0.2')
+        extra_environ=dict(REMOTE_ADDR='127.0.0.3')
         )
 
         node = db.session.merge(node)
 
         assert not resp.json['queries']
-        assert node.last_ip == '127.0.0.2'
+        assert node.last_ip == '127.0.0.3'
 
-    def test_distributed_query_read_complete(self, db, node, testapp):
-        q = DistributedQuery.create(sql='select * from osquery_info;')
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
+        # verify cache has been cleaned up
+        assert not cache.redis.exists('doorman:distributed_queries:{0}'.format(node.id))
+
+    def test_distributed_query_read_complete(self, db, node, testapp, distributed_query):
+        t = distributed_query.tasks.first()
         t.update(status=DistributedQueryTask.COMPLETE)
 
         resp = testapp.post_json(url_for('api.distributed_read'), {
@@ -795,17 +875,15 @@ class TestDistributedRead:
         assert not resp.json['queries']
         assert node.last_ip == '127.0.0.2'
 
-    def test_distributed_query_read_not_before(self, db, node, testapp):
+    def test_distributed_query_read_not_before(self, cache, db, node, testapp, distributed_query):
         import doorman.utils
 
         now = dt.datetime.utcnow().replace(microsecond=0)
         not_before = now + dt.timedelta(days=1)
 
-        q = DistributedQuery.create(sql='select * from osquery_info;',
-                                    not_before=not_before)
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
-
-        assert q.not_before == not_before
+        q = distributed_query
+        q.update(not_before=not_before.strftime("%Y-%m-%d %H:%M:%S"))
+        t = q.tasks.first()
 
         datetime_patcher = mock.patch.object(doorman.api.dt, 'datetime',
                                              mock.Mock(wraps=dt.datetime))
@@ -845,6 +923,9 @@ class TestDistributedRead:
 
         assert doorman.utils.dt.datetime.utcnow() != not_before
 
+        # verify cache has been cleaned up
+        assert not cache.redis.exists('distributed_queries.{0}'.format(node.id))
+
 
 class TestDistributedWrite:
 
@@ -865,10 +946,9 @@ class TestDistributedWrite:
         assert not result
         assert node.last_ip == '127.0.0.2'
 
-    def test_distributed_query_write_state_new(self, db, node, testapp):
-        q = DistributedQuery.create(
-            sql="select name, path, pid from processes where name = 'osqueryd';")
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
+    def test_distributed_query_write_state_new(self, db, node, testapp, distributed_query):
+        q = distributed_query
+        t = distributed_query.tasks.first()
 
         resp = testapp.post_json(url_for('api.distributed_write'), {
             'node_key': node.node_key,
@@ -887,10 +967,9 @@ class TestDistributedWrite:
         assert not q.results
         assert node.last_ip == '127.0.0.2'
 
-    def test_distributed_query_write_state_pending(self, db, node, testapp):
-        q = DistributedQuery.create(
-            sql="select name, path, pid from processes where name = 'osqueryd';")
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
+    def test_distributed_query_write_state_pending(self, db, node, testapp, distributed_query):
+        q = distributed_query
+        t = distributed_query.tasks.first()
         t.update(status=DistributedQueryTask.PENDING)
 
         data = [{
@@ -923,11 +1002,9 @@ class TestDistributedWrite:
         assert q.results[1].columns == data[1]
         assert node.last_ip == '127.0.0.2'
 
-    def test_distributed_query_write_state_complete(self, db, node, testapp):
-        q = DistributedQuery.create(
-            sql="select name, path, pid from processes where name = 'osqueryd';")
-        t = DistributedQueryTask.create(node=node, distributed_query=q)
-        t.update(status=DistributedQueryTask.PENDING)
+    def test_distributed_query_write_state_complete(self, db, node, testapp, distributed_query):
+        q = distributed_query
+        t = distributed_query.tasks.first()
 
         data = [{
             "name": "osqueryd",
@@ -965,14 +1042,11 @@ class TestDistributedWrite:
         assert q.results[0].columns == data[0]
         assert node.last_ip == '127.0.0.2'
 
-    def test_malicious_node_distributed_query_write(self, db, node, testapp):
+    def test_malicious_node_distributed_query_write(self, db, node, testapp, distributed_query):
         foo = NodeFactory(host_identifier='foo')
-        q1 = DistributedQuery.create(
-            sql="select name, path, pid from processes where name = 'osqueryd';")
-        t1 = DistributedQueryTask.create(node=node, distributed_query=q1)
-        q2 = DistributedQuery.create(
-            sql="select name, path, pid from processes where name = 'osqueryd';")
-        t2 = DistributedQueryTask.create(node=foo, distributed_query=q2)
+        q = distributed_query
+        t1 = distributed_query.tasks.first()
+        t2 = DistributedQueryTask.create(node=foo, distributed_query=q)
 
         t1.update(status=DistributedQueryTask.PENDING)
         t2.update(status=DistributedQueryTask.PENDING)
@@ -988,13 +1062,11 @@ class TestDistributedWrite:
 
         foo = db.session.merge(foo)
         node = db.session.merge(node)
-        q1 = db.session.merge(q1)
-        q2 = db.session.merge(q2)
+        q = db.session.merge(q)
         t1 = db.session.merge(t1)
         t2 = db.session.merge(t2)
 
-        assert not q1.results
-        assert not q2.results
+        assert not q.results
         assert node.last_ip != '127.0.0.2'
         assert not node.last_ip
         assert foo.last_ip == '127.0.0.2'
@@ -1423,7 +1495,6 @@ class TestRuleEndToEnd:
         from doorman.models import Rule
         from doorman.plugins import AbstractAlerterPlugin
         from doorman.rules import RuleMatch
-        from doorman.tasks import analyze_result
 
         # Add a dummy alerter
         class DummyAlerter(AbstractAlerterPlugin):
@@ -1487,16 +1558,11 @@ class TestRuleEndToEnd:
                     }
                 ]
 
-                # Patch the task function to just call directly - i.e. not delay
-                def immediately_analyze(*args, **kwargs):
-                    return analyze_result(*args, **kwargs)
-
-                with mock.patch.object(analyze_result, 'delay', new=immediately_analyze):
-                    resp = testapp.post_json(url_for('api.logger'), {
-                        'node_key': node.node_key,
-                        'data': data,
-                        'log_type': 'result',
-                    })
+                resp = testapp.post_json(url_for('api.logger'), {
+                    'node_key': node.node_key,
+                    'data': data,
+                    'log_type': 'result',
+                })
 
                 # Assert that the alerter has triggered, and that it gave the right arguments.
                 assert len(dummy_alerter.calls) == 1

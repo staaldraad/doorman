@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-from factory import Sequence
+from factory import Sequence, post_generation
 from factory.alchemy import SQLAlchemyModelFactory
 
 from doorman.database import db
+from doorman.extensions import cache
+from doorman.manage.utils import create_distributed_query_tasks_for_query
 from doorman.models import (
     Node, Pack, Query, Tag, FilePath,
     DistributedQuery, DistributedQueryTask, DistributedQueryResult,
@@ -50,6 +52,13 @@ class DistributedQueryFactory(BaseFactory):
 
     class Meta:
         model = DistributedQuery
+
+    @post_generation
+    def create_tasks(self, create, extracted, **kwargs):
+        self.save()
+
+        if extracted:
+            create_distributed_query_tasks_for_query(self, *extracted)
 
 
 class DistributedQueryTaskFactory(BaseFactory):
