@@ -250,7 +250,7 @@ def redis(app, config, *args, **kwargs):
             return timeout
 
         def _normalize_key(self, key):
-            from werkzeug._compat import to_native
+            from doorman.compat import to_native
             key = to_native(key)
             if self.key_prefix:
                 key = self.key_prefix + key
@@ -261,7 +261,7 @@ def redis(app, config, *args, **kwargs):
             timeout = self._normalize_timeout(timeout)
             return self._client.expire(name=key, time=timeout)
 
-    return RedisCache(**kwargs)
+    return RedisCache(decode_responses=True, **kwargs)
 
 
 class Cache(_Cache):

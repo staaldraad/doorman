@@ -92,6 +92,7 @@ def assemble_distributed_queries(node):
 
     return queries
 
+
 def assemble_distributed_queries_from_cache(node):
     '''
     Retrieve all distributed queries assigned to a particular node
@@ -113,6 +114,7 @@ def assemble_distributed_queries_from_cache(node):
     # O(N) lookup cost where N is set cardinality
 
     for query_id in cache.redis.smembers(distributed_queries_by_node):
+        query_id = query_id.decode('utf-8')
 
         # O(3) lookup cost
 
@@ -140,7 +142,7 @@ def assemble_distributed_queries_from_cache(node):
             )
             continue
 
-        queries[guid] = sql
+        queries[guid.decode('utf-8')] = sql.decode('utf-8')
 
     return queries
 

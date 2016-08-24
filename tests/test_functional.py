@@ -15,6 +15,7 @@ try:
 except ImportError:
     from urllib.parse import urlparse
 
+from doorman.compat import to_native
 from doorman.models import (
     Node, Pack, Query, Tag, FilePath,
     DistributedQuery, DistributedQueryTask, DistributedQueryResult, Rule,
@@ -743,14 +744,12 @@ class TestDistributed:
         resp.form['tags'] = [tag.value]  # include foo implicitly by its tag
 
         resp = resp.form.submit()
-
         assert resp.status_code == 302
 
         q = DistributedQuery.query.filter_by(description='this is a foobar query.').one()
         assert q.sql == 'select * from osquery_info;'
         assert q.not_before == not_before
         assert q.tasks.count() == 2
-        # assert tag in q.tags
 
         task_foo = q.tasks.filter_by(node=foo).first()
         assert task_foo.node == foo
@@ -761,36 +760,46 @@ class TestDistributed:
         dq_cache_key = 'doorman:distributed_queries_by_node:{0}'
         assert cache.redis.scard(dq_cache_key.format(node.id)) == 1
         assert cache.redis.scard(dq_cache_key.format(foo.id)) == 1
-        assert str(q.id) in cache.redis.smembers(dq_cache_key.format(node.id))
-        assert str(q.id) in cache.redis.smembers(dq_cache_key.format(foo.id))
+        assert str(q.id).encode('utf-8') in cache.redis.smembers(dq_cache_key.format(node.id))
+        assert str(q.id).encode('utf-8') in cache.redis.smembers(dq_cache_key.format(foo.id))
 
         sql, not_before, guid_node, guid_foo = cache.redis.hmget(
             'doorman:distributed_query:{0}'.format(q.id),
             'sql', 'not_before', node.id, foo.id
         )
-        assert sql == q.sql
-        assert not_before == q.not_before.strftime('%s.%f')
-        assert guid_node == task_node.guid
-        assert guid_foo == task_foo.guid
+        assert sql.decode('utf-8') == q.sql
+        assert not_before.decode('utf-8') == q.not_before.strftime('%s.%f')
+        assert guid_node.decode('utf-8') == task_node.guid
+        assert guid_foo.decode('utf-8') == task_foo.guid
 
-    def test_assembling_distributed_queries(self, cache, db, node, testapp):
+    def test_assembling_distributed_queries(self, cache, db, node, testapp, tag):
         foo = NodeFactory(host_identifier='foo')
-        resp = testapp.post(url_for('manage.add_distributed'), {
-            'sql': 'select * from osquery_info;',
-            'description': 'this is a foobar query.',
-            'nodes': [node.node_key, foo.node_key],
-        })
+        foo.tags.append(tag)
+        foo.save()
+
+        resp = testapp.get(url_for('manage.add_distributed'))
+        resp.form['sql'] = 'select * from osquery_info;'
+        resp.form['description'] = 'this is a foobar query.'
+        resp.form['nodes'] = [node.node_key]  # include node explicitly
+        resp.form['tags'] = [tag.value]  # include foo implicitly by its tag
+
+        resp = resp.form.submit()
+        assert resp.status_code == 302
 
         q = DistributedQuery.query.filter_by(description='this is a foobar query.').one()
         t = q.tasks.filter_by(node=node).first()
 
         not_before = dt.datetime.utcnow() + dt.timedelta(days=1)
-        resp = testapp.post(url_for('manage.add_distributed'), {
-            'sql': 'select * from system_info;',
-            'description': 'this is a barbaz query.',
-            'not_before': not_before.strftime("%Y-%m-%d %H:%M:%S"),
-            'nodes': [node.node_key, foo.node_key],
-        })
+
+        resp = testapp.get(url_for('manage.add_distributed'))
+        resp.form['sql'] = 'select * from system_info;'
+        resp.form['description'] = 'this is a barbaz query.'
+        resp.form['not_before'] = not_before.strftime("%Y-%m-%d %H:%M:%S")
+        resp.form['nodes'] = [node.node_key]  # include node explicitly
+        resp.form['tags'] = [tag.value]  # include foo implicitly by its tag
+
+        resp = resp.form.submit()
+        assert resp.status_code == 302
 
         queries = assemble_distributed_queries_from_cache(node)
         assert queries == {t.guid: q.sql}
@@ -1209,7 +1218,7 @@ class TestCreateQueryPackFromUpload:
 
     def test_pack_upload_invalid_json(self, testapp, db):
         resp = testapp.get(url_for('manage.add_pack'))
-        resp.form['pack'] = Upload('foo.conf', 'bad data')
+        resp.form['pack'] = Upload('foo.conf', b'bad data')
         resp = resp.form.submit()
 
         # This won't be a redirect, since it's an error.
