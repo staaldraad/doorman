@@ -11,4 +11,6 @@ exec chpst \
   gunicorn \
     --workers 4 \
     --bind 0.0.0.0:5000 \
-    manage:app
+    manage:app \
+    --certfile=certificate.crt \
+    --keyfile=private.key

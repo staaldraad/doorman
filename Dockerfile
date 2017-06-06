@@ -51,6 +51,7 @@ RUN cd /src/ \
   && bower install --allow-root \
   && python manage.py assets build \
   && mkdir /var/log/doorman/ \
-  && chown doorman:doorman /var/log/doorman/
+  && chown doorman:doorman /var/log/doorman/ \
+  && chown doorman:doorman -R /src
 
 CMD ["runsvdir", "/etc/service"]

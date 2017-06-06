@@ -220,7 +220,7 @@ class ProdConfig(Config):
 
     ENFORCE_SSL = True
 
-    SQLALCHEMY_DATABASE_URI = ''
+    SQLALCHEMY_DATABASE_URI = 'postgresql://doormanpostgres:5432/doorman'
 
     DOORMAN_ENROLL_SECRET = [
 
@@ -242,7 +242,7 @@ class DevConfig(Config):
     DEBUG_TB_INTERCEPT_REDIRECTS = False
     ASSETS_DEBUG = True
 
-    SQLALCHEMY_DATABASE_URI = 'postgresql://localhost:5432/doorman'
+    SQLALCHEMY_DATABASE_URI = 'postgresql://doorman:superdupersecret@postgres:5432/doorman'
 
     DOORMAN_ENROLL_SECRET = [
         'secret',
