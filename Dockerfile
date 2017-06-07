@@ -29,7 +29,7 @@ RUN cd /usr/bin \
 # Copy and install our requirements first, so they can be cached
 COPY ./requirements/prod.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt \
-  && pip install 'gunicorn==19.6.0'
+  && pip install 'gevent'
 
 # Add our application to the container
 COPY . /src/
